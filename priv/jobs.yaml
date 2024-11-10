@@ -1,0 +1,24 @@
+template: &base_tpl
+  apiVersion: v1
+  kind: Pod
+  spec:
+    containers:
+      - name: main
+
+pools:
+  - name: foo
+    pod_template:
+      <<: *base_tpl
+      spec:
+        containers:
+          - name: main
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 100m
+
+jobs:
+  - pool: foo
+    script: foo
+    path: /foo
+    function: foo

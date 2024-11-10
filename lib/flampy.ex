@@ -1,0 +1,2 @@
+defmodule Flampy do
+end

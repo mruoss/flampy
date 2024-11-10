@@ -1,0 +1,108 @@
+name: Build and Publish
+on:
+  workflow_dispatch:
+  push:
+    tags: [v*]
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  MIX_ENV: prod
+  KUBECONFIG: /home/runner/.kube/config
+
+jobs:
+  build_container_image:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish
+
+    permissions:
+      packages: write
+      contents: write
+    steps:
+      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4
+
+      - name: Parse .tool-versions
+        id: versions
+        run: |
+          while IFS= read -r line; do
+            NAME="$(echo $line | cut -d' ' -f1)"
+            VALUE=$(echo $line | cut -d' ' -f2-)
+
+            echo "$NAME=$VALUE" >> $GITHUB_OUTPUT
+          done < .tool-versions
+
+      - name: Get hexpm Docker Image Tags
+        id: get-images
+        run: |
+          ERLANG_ALPINE=$(curl --request GET \
+            --url "https://registry.hub.docker.com/v2/namespaces/hexpm/repositories/erlang/tags?name=${{ steps.versions.outputs.erlang }}-alpine&page_size=25&ordering=name" \
+            | jq -r ".results[0].name")
+          ELIXIR_ALPINE=${{ steps.versions.outputs.elixir }}-erlang-${ERLANG_ALPINE}
+
+          echo "erlang=hexpm/erlang:$ERLANG_ALPINE" >> $GITHUB_OUTPUT
+          echo "elixir=hexpm/elixir:$ELIXIR_ALPINE" >> $GITHUB_OUTPUT
+
+      - name: Login to Github Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare variables
+        id: prepare_vars
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG=${{ github.ref_name }}
+          else
+            TAG=dev
+          fi
+
+          echo "cache_src=ghcr.io/${{ github.repository }}:dev" >> $GITHUB_OUTPUT
+          echo "e2e_image=ghcr.io/${{ github.repository }}:e2e" >> $GITHUB_OUTPUT
+          echo "dest_image=ghcr.io/${{ github.repository }}:${TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        id: build_and_push
+        with:
+          push: ${{ github.ref_type == 'tag' }}
+          tags: "${{ steps.prepare_vars.outputs.dest_image }},${{ steps.prepare_vars.outputs.cache_src }},ghcr.io/${{ github.repository }}:latest"
+          platforms: linux/amd64,linux/arm64/v8,linux/arm
+          cache-from: type=registry,ref=${{ steps.prepare_vars.outputs.cache_src }}
+          cache-to: type=inline
+          build-args: |
+            ERLANG_IMAGE=${{ steps.get-images.outputs.erlang }}
+            ELIXIR_IMAGE=${{ steps.get-images.outputs.elixir }}
+
+      - name: Prepare release notes
+        if: github.ref_type == 'tag'
+        run: |
+          csplit -s CHANGELOG.md "/^## /" {1}
+          cat xx01 > release_notes.md
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        if: github.ref_type == 'tag'
+        id: create_release
+        with:
+          files: |
+            manifest.yaml
+          draft: false
+          prerelease: false
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref }}
+          body_path: release_notes.md
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

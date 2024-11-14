@@ -2,6 +2,8 @@ defmodule Flampy.Application do
   use Application
 
   def start(_type, [env]) do
+    flame_parent = FLAME.Parent.get()
+
     jobs_file =
       :code.root_dir()
       |> Path.join("jobs.yaml")
@@ -9,7 +11,14 @@ defmodule Flampy.Application do
 
     flame_pools = parse_pools(jobs_file, env)
     routes = parse_jobs(jobs_file)
-    children = [{Bandit, plug: {Flampy.Dispatcher, routes: routes}} | flame_pools]
+
+    # Only start bandit on main application
+    children =
+      if flame_parent do
+        flame_pools
+      else
+        [{Bandit, plug: {Flampy.Dispatcher, routes: routes}} | flame_pools]
+      end
 
     opts = [strategy: :one_for_one, name: Flampy.Supervisor]
     Supervisor.start_link(children, opts)

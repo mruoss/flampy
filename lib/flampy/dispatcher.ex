@@ -13,11 +13,15 @@ defmodule Flampy.Dispatcher do
         response =
           FLAME.call(pool, fn ->
             try do
-              path = :code.root_dir() |> Path.join("python") |> String.to_charlist()
+              path = conn.assigns.dispatcher[:python_path]
               {:ok, pid} = :python.start([{:python_path, path}, {:python, ~c"python3"}])
               {:ok, :python.call(pid, script, function, [])}
             rescue
-              error -> {:error, error}
+              error in ErlangError ->
+                {:error, error.original}
+
+              error ->
+                {:error, error}
             end
           end)
 
@@ -27,15 +31,37 @@ defmodule Flampy.Dispatcher do
             |> put_resp_content_type("application/json")
             |> send_resp(200, Jason.encode!(%{"result" => result}))
 
+          {:error, {:python, class, argument, stacktrace}} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(
+              500,
+              Jason.encode!(%{
+                "type" => "python",
+                "message" => List.to_string(argument),
+                "class" => class,
+                "stacktrace" => IO.iodata_to_binary(stacktrace)
+              })
+            )
+
           {:error, error} when is_exception(error) ->
             conn
             |> put_resp_content_type("application/json")
-            |> send_resp(500, Jason.encode!(%{"error" => Exception.message(error)}))
+            |> send_resp(
+              500,
+              Jason.encode!(%{"type" => "elixir", "message" => Exception.message(error)})
+            )
 
-          {:error, error} ->
+          {:error, _error} ->
             conn
             |> put_resp_content_type("application/json")
-            |> send_resp(500, Jason.encode!(%{"error" => "Unexpected error during execution"}))
+            |> send_resp(
+              500,
+              Jason.encode!(%{
+                "type" => "unknown",
+                "message" => "Unexpected error during execution"
+              })
+            )
         end
     end
   end

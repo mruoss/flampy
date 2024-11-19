@@ -4,8 +4,15 @@ defmodule Flampy.Application do
   def start(_type, [env]) do
     flame_parent = FLAME.Parent.get()
 
+    root_dir = if env == :prod, do: :code.root_dir(), else: :code.priv_dir(:flampy)
+
+    python_path =
+      root_dir
+      |> Path.join("python")
+      |> String.to_charlist()
+
     jobs_file =
-      :code.root_dir()
+      root_dir
       |> Path.join("jobs.yaml")
       |> YamlElixir.read_from_file!(merge_anchors: true)
 
@@ -17,7 +24,10 @@ defmodule Flampy.Application do
       if flame_parent do
         flame_pools
       else
-        [{Bandit, plug: {Flampy.Dispatcher, routes: routes}} | flame_pools]
+        [
+          {Bandit, plug: {Flampy.Dispatcher, routes: routes, python_path: python_path}}
+          | flame_pools
+        ]
       end
 
     opts = [strategy: :one_for_one, name: Flampy.Supervisor]

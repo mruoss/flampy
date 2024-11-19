@@ -6,7 +6,7 @@ template: &base_tpl
       - name: main
 
 pools:
-  - name: foo
+  - name: test
     pod_template:
       <<: *base_tpl
       spec:
@@ -18,7 +18,7 @@ pools:
                 cpu: 100m
 
 jobs:
-  - pool: foo
-    script: foo
-    path: /foo
+  - pool: test
+    script: test
+    path: /test
     function: foo

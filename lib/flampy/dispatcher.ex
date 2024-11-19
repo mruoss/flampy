@@ -10,16 +10,33 @@ defmodule Flampy.Dispatcher do
         send_resp(conn, 404, "oops")
 
       %{script: script, function: function, pool: pool} ->
-        result =
+        response =
           FLAME.call(pool, fn ->
-            path = :code.root_dir() |> Path.join("python") |> String.to_charlist()
-            {:ok, pid} = :python.start([{:python_path, path}, {:python, ~c"python3"}])
-            :python.call(pid, script, function, [])
+            try do
+              path = :code.root_dir() |> Path.join("python") |> String.to_charlist()
+              {:ok, pid} = :python.start([{:python_path, path}, {:python, ~c"python3"}])
+              {:ok, :python.call(pid, script, function, [])}
+            rescue
+              error -> {:error, error}
+            end
           end)
 
-        conn
-        |> put_resp_content_type("application/json")
-        |> send_resp(200, Jason.encode!(%{"result" => result}))
+        case response do
+          {:ok, result} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(200, Jason.encode!(%{"result" => result}))
+
+          {:error, error} when is_exception(error) ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(500, Jason.encode!(%{"error" => Exception.message(error)}))
+
+          {:error, error} ->
+            conn
+            |> put_resp_content_type("application/json")
+            |> send_resp(500, Jason.encode!(%{"error" => "Unexpected error during execution"}))
+        end
     end
   end
 end
